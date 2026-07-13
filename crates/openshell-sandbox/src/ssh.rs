@@ -9,9 +9,11 @@ use crate::process::drop_privileges;
 use crate::sandbox;
 #[cfg(target_os = "linux")]
 use crate::{register_managed_child, unregister_managed_child};
+use bytes::Bytes;
 use miette::{IntoDiagnostic, Result};
 use nix::pty::{Winsize, openpty};
 use nix::unistd::setsid;
+use rand::rngs::StdRng;
 use russh::ChannelId;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::server::{Auth, Handle, Session};
@@ -47,10 +49,8 @@ async fn ssh_server_init(
     Arc<russh::server::Config>,
     Option<Arc<(PathBuf, PathBuf)>>,
 )> {
-    let host_key = {
-        let mut rng = rand::rng();
-        PrivateKey::random(&mut rng, Algorithm::Ed25519).into_diagnostic()?
-    };
+    let mut rng: StdRng = rand::make_rng();
+    let host_key = PrivateKey::random(&mut rng, Algorithm::Ed25519).into_diagnostic()?;
 
     let mut config = russh::server::Config {
         auth_rejection_time: Duration::from_secs(1),
@@ -795,7 +795,7 @@ fn spawn_pty_shell(
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    let data = bytes::Bytes::copy_from_slice(&buf[..n]);
+                    let data = Bytes::copy_from_slice(&buf[..n]);
                     let handle_clone = handle_clone.clone();
                     let _ = runtime_reader
                         .block_on(async move { handle_clone.data(channel, data).await });
@@ -935,7 +935,7 @@ fn spawn_pipe_exec(
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    let data = bytes::Bytes::copy_from_slice(&buf[..n]);
+                    let data = Bytes::copy_from_slice(&buf[..n]);
                     let h = stdout_handle.clone();
                     let _ = stdout_runtime.block_on(async move { h.data(channel, data).await });
                 }
@@ -954,7 +954,7 @@ fn spawn_pipe_exec(
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    let data = bytes::Bytes::copy_from_slice(&buf[..n]);
+                    let data = Bytes::copy_from_slice(&buf[..n]);
                     let h = stderr_handle.clone();
                     let _ = stderr_runtime
                         .block_on(async move { h.extended_data(channel, 1, data).await });
