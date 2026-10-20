@@ -14,9 +14,9 @@ use miette::{IntoDiagnostic, Result};
 use nix::pty::{Winsize, openpty};
 use nix::unistd::setsid;
 use rand::rngs::StdRng;
-use russh::ChannelId;
 use russh::keys::{Algorithm, PrivateKey};
-use russh::server::{Auth, Handle, Session};
+use russh::server::{Auth, ChannelOpenHandle, Handle, Session};
+use russh::{ChannelId, ChannelOpenFailure};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::SocketAddr;
@@ -317,9 +317,11 @@ impl russh::server::Handler for SshHandler {
     async fn channel_open_session(
         &mut self,
         _channel: russh::Channel<russh::server::Msg>,
+        reply: ChannelOpenHandle,
         _session: &mut Session,
-    ) -> Result<bool, Self::Error> {
-        Ok(true)
+    ) -> Result<(), Self::Error> {
+        reply.accept().await;
+        Ok(())
     }
 
     async fn channel_open_direct_tcpip(
@@ -329,8 +331,9 @@ impl russh::server::Handler for SshHandler {
         port_to_connect: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: ChannelOpenHandle,
         _session: &mut Session,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<(), Self::Error> {
         // Only allow forwarding to loopback destinations to prevent the
         // sandbox SSH server from being used as a generic proxy.
         let is_loopback = host_to_connect == "127.0.0.1"
@@ -342,13 +345,21 @@ impl russh::server::Handler for SshHandler {
                 port = port_to_connect,
                 "direct-tcpip rejected: non-loopback destination"
             );
-            return Ok(false);
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
         }
 
         let host = host_to_connect.to_string();
         #[allow(clippy::cast_possible_truncation)]
         let port = port_to_connect as u16;
         let netns_fd = self.netns_fd;
+
+        // Confirm the channel before spawning the forwarding task so the
+        // CHANNEL_OPEN_CONFIRMATION is queued ahead of any data or close the
+        // task may send.
+        reply.accept().await;
 
         tokio::spawn(async move {
             let addr = format!("{host}:{port}");
@@ -367,7 +378,7 @@ impl russh::server::Handler for SshHandler {
             let _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut tcp_stream).await;
         });
 
-        Ok(true)
+        Ok(())
     }
 
     async fn pty_request(

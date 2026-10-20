@@ -212,11 +212,11 @@ The sandbox SSH server (`crates/openshell-sandbox/src/ssh.rs`) implements
 `channel_open_direct_tcpip` from the russh `Handler` trait.
 
 - **Loopback-only**: only `127.0.0.1`, `localhost`, and `::1` destinations are accepted.
-  Non-loopback destinations are rejected (`Ok(false)`) to prevent the sandbox from being
-  used as a generic proxy.
-- **Bridge**: accepted channels spawn a tokio task that connects a `TcpStream` to the
-  target address and uses `copy_bidirectional` between the SSH channel stream and the
-  TCP stream.
+  Non-loopback destinations are rejected via `ChannelOpenHandle::reject` with
+  `AdministrativelyProhibited` to prevent the sandbox from being used as a generic proxy.
+- **Bridge**: accepted channels are confirmed via `ChannelOpenHandle::accept`, then spawn a
+  tokio task that connects a `TcpStream` to the target address and uses
+  `copy_bidirectional` between the SSH channel stream and the TCP stream.
 - No additional state is stored on `SshHandler` — the `Channel<Msg>` object from russh is
   self-contained, so forwarding channels are fully independent of session channels.
 
